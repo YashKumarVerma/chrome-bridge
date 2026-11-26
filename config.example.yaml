@@ -1,0 +1,16 @@
+# chrome-bridge config. Copy to ~/.config/chrome-bridge/config.yaml.
+# Edits apply live: the extension re-reads this through the server every 30s.
+
+listen: 127.0.0.1:47123             # extension hardcodes this port
+out_dir: ~/.config/chrome-bridge/data  # each source lands in <out_dir>/<name>.json (0600)
+extension_id: ""                    # optional: pin to your extension's id from chrome://extensions
+
+sources:
+  - name: metabase                  # file name + log label; no slashes
+    url: https://metabase.famapp.in # cookies are read for this URL; localStorage from an open tab on its origin
+    every: 5m                       # Go duration (30s, 5m, 1h); minimum effective 30s
+    cookies: [metabase.SESSION]     # cookie names, or ["*"] for all
+    local_storage: []               # keys, or ["*"] for all; needs a tab of the site open
+    write:                          # optional: also write single values to their own files
+      - from: cookie:metabase.SESSION   # cookie:<name> or localStorage:<key>
+        to: ~/.config/metabase/session

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Bridge",
+  "version": "1.0",
+  "description": "Posts cookies and localStorage of configured sites to the local chrome-bridge server",
+  "permissions": ["cookies", "alarms", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Chrome Bridge: sync now" }
+}
