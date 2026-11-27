@@ -4,7 +4,7 @@ Pipes cookies and localStorage from the user's Chrome to local files, so scripts
 
 ## Layout
 
-- `main.go`: Go server. Reads the YAML on every request. `GET /config` (sources for the extension), `POST /push` (writes `<out_dir>/<name>.json` plus any `write:` targets, all 0600), `GET /status` (uptime, paths, last push per source: counts and errors only, never values).
+- `main.go`: Go server. Reads the YAML on every request. `GET /config` (sources for the extension), `POST /push` (writes `<out_dir>/<name>.json` plus any `write:` targets, all 0600), `GET /status` (uptime, paths, last push per source: counts and errors only, never values), `GET /data` and `GET /data/{name}` (synced JSON for local workers; signed like every other endpoint, names limited to configured sources).
 - `main_test.go`: one test: origin check, wrong secret, stale timestamp, response signatures, config, unknown source, push, write targets, and that `/status` leaks no values or secret.
 - `extension/bridge.js`: the only code that talks to the server: signs requests, verifies response signatures, raises `BridgeDown` / `AuthError`. Used by background and popup (both ES modules).
 - `extension/background.js`: every 30s alarm fetches `/config`, collects due sources, POSTs each; pushes immediately when a watched cookie changes. Sets the badge (`DOWN` red, `KEY` red for auth, `ERR` orange) and keeps per-source state in `chrome.storage.local` for the popup.

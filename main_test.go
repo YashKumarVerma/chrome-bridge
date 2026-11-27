@@ -76,6 +76,18 @@ sources:
 	if strings.Contains(st.Body.String(), "s3cret") || strings.Contains(st.Body.String(), "test-secret") {
 		t.Fatal("status leaks values or the shared secret")
 	}
+	if w := do(req{method: "GET", path: "/data/mb"}); w.Code != 200 || !strings.Contains(w.Body.String(), `"metabase.SESSION": "s3cret"`) {
+		t.Fatalf("data/mb: %d %s", w.Code, w.Body)
+	}
+	if w := do(req{method: "GET", path: "/data"}); w.Code != 200 || !strings.Contains(w.Body.String(), `"mb":{`) {
+		t.Fatalf("data: %d %s", w.Code, w.Body)
+	}
+	if c := do(req{method: "GET", path: "/data/nope"}).Code; c != 404 {
+		t.Fatalf("data/nope got %d", c)
+	}
+	if c := do(req{method: "GET", path: "/data/mb", secret: "nope"}).Code; c != 401 {
+		t.Fatalf("unsigned data got %d", c)
+	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "session")); string(b) != "s3cret" {
 		t.Fatalf("write target = %q", b)
 	}

@@ -176,6 +176,31 @@ func handler(cfgPath string) http.Handler {
 		})
 		return 200, b
 	}))
+	readData := func(cfg *Config, name string) (json.RawMessage, bool) {
+		for _, s := range cfg.Sources {
+			if s.Name == name && !strings.ContainsAny(name, `/\`) {
+				b, err := os.ReadFile(filepath.Join(cfg.OutDir, name+".json"))
+				return b, err == nil
+			}
+		}
+		return nil, false
+	}
+	mux.HandleFunc("GET /data", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		all := map[string]json.RawMessage{}
+		for _, s := range cfg.Sources {
+			if b, ok := readData(cfg, s.Name); ok {
+				all[s.Name] = b
+			}
+		}
+		b, _ := json.Marshal(all)
+		return 200, b
+	}))
+	mux.HandleFunc("GET /data/{name}", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		if b, ok := readData(cfg, r.PathValue("name")); ok {
+			return 200, b
+		}
+		return 404, []byte("unknown or never-synced source")
+	}))
 	mux.HandleFunc("POST /push", guard(func(r *http.Request, cfg *Config, body []byte) (int, []byte) {
 		var p Push
 		if err := json.Unmarshal(body, &p); err != nil {
