@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #e4e7eb; --card: #f6f8fa;
+    --ok: #1a7f37; --ok-bg: #dafbe1; --bad: #cf222e; --bad-bg: #ffebe9; --warn: #9a6700; --warn-bg: #fff8c5;
+    --btn: #1f2328; --btn-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d; --card: #161b22;
+      --ok: #3fb950; --ok-bg: #12261e; --bad: #f85149; --bad-bg: #2d1416; --warn: #d29922; --warn-bg: #2b2111;
+      --btn: #e6edf3; --btn-fg: #0d1117;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 340px; background: var(--bg); color: var(--fg); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 14px; font-weight: 600; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .ok { color: var(--ok); background: var(--ok-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .idle { color: var(--muted); background: var(--card); }
+  section { padding: 10px 14px; }
+  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+  dt { color: var(--muted); }
+  dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 6px; display: block; white-space: pre-wrap; word-break: break-all; margin-top: 6px; user-select: all; }
+  .site { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .name { font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .err { color: var(--bad); font-size: 12px; margin-top: 4px; }
+  .empty { color: var(--muted); }
+  footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--line); }
+  footer span { color: var(--muted); font-size: 12px; }
+  button { font: inherit; font-weight: 600; background: var(--btn); color: var(--btn-fg); border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  details { padding: 0 14px 10px; }
+  summary { cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 4px 0; }
+  form { display: flex; gap: 6px; margin-top: 6px; }
+  input { flex: 1; min-width: 0; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .note { font-size: 12px; margin-top: 6px; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <header><h1>Chrome Bridge</h1><span id="pill" class="pill idle">Checking</span></header>
+  <section id="server"></section>
+  <section><h2>Sites</h2><div id="sites"></div></section>
+  <details>
+    <summary>Settings</summary>
+    <form id="settings">
+      <input id="url" type="url" aria-label="chrome-bridge server URL" spellcheck="false" placeholder="http://127.0.0.1:47123">
+      <button type="submit">Save</button>
+      <button type="button" class="ghost" id="reset">Reset</button>
+    </form>
+    <div id="url-warn" class="note err" hidden>Not localhost: cookies will travel over the network. Use https and a server you control.</div>
+    <div id="url-msg" class="note meta" aria-live="polite"></div>
+  </details>
+  <footer><span id="updated"></span><button id="sync">Sync now</button></footer>
+  <script src="popup.js"></script>
+</body>
+</html>

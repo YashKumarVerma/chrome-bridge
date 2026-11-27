@@ -44,6 +44,12 @@ sources:
 	if c := do("POST", "/push", ext, `{"name":"mb","cookies":{"metabase.SESSION":"s3cret"}}`).Code; c != 204 {
 		t.Fatalf("push got %d", c)
 	}
+	if w := do("GET", "/status", ext, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"mb":{"at"`) {
+		t.Fatalf("status: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(do("GET", "/status", ext, "").Body.String(), "s3cret") {
+		t.Fatal("status leaks values")
+	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "session")); string(b) != "s3cret" {
 		t.Fatalf("write target = %q", b)
 	}

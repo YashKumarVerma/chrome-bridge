@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -81,8 +82,18 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+type lastPush struct {
+	At           time.Time `json:"at"`
+	Cookies      int       `json:"cookies"`
+	LocalStorage int       `json:"local_storage"`
+	Errors       []string  `json:"errors"`
+}
+
 func handler(cfgPath string) http.Handler {
 	mux := http.NewServeMux()
+	started := time.Now()
+	var mu sync.Mutex
+	pushes := map[string]lastPush{}
 	guard := func(next func(http.ResponseWriter, *http.Request, *Config)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			cfg, err := load(cfgPath)
@@ -101,6 +112,14 @@ func handler(cfgPath string) http.Handler {
 	}
 	mux.HandleFunc("GET /config", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
 		json.NewEncoder(w).Encode(cfg.Sources)
+	}))
+	mux.HandleFunc("GET /status", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
+		mu.Lock()
+		defer mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{
+			"started_at": started, "config": cfgPath, "out_dir": cfg.OutDir, "listen": cfg.Listen,
+			"sources": cfg.Sources, "pushes": pushes,
+		})
 	}))
 	mux.HandleFunc("POST /push", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
 		var p Push
@@ -134,6 +153,9 @@ func handler(cfgPath string) http.Handler {
 				log.Printf("%s: write %s: %v", p.Name, wr.To, err)
 			}
 		}
+		mu.Lock()
+		pushes[p.Name] = lastPush{p.FetchedAt, len(p.Cookies), len(p.LocalStorage), p.Errors}
+		mu.Unlock()
 		log.Printf("%s: %d cookies, %d localStorage, %d errors", p.Name, len(p.Cookies), len(p.LocalStorage), len(p.Errors))
 		w.WriteHeader(204)
 	}))

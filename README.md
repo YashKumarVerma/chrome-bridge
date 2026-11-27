@@ -20,7 +20,7 @@ cp config.example.yaml ~/.config/chrome-bridge/config.yaml   # then edit
 ```
 
 In Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `extension/`.
-Click the extension icon to sync immediately.
+Click the extension icon for the status popup: server live/down, uptime, config paths, and each site's last sync, cookie counts and errors. **Sync now** forces a full sync. **Settings** sets the server URL (default `http://127.0.0.1:47123`) if you change `listen`.
 
 ## Config
 
@@ -59,6 +59,19 @@ Output (`<out_dir>/<name>.json`, mode 0600):
 - Sources sync when their `every` interval elapses, when a watched cookie changes (e.g. you log in again), and when you click the extension icon.
 - localStorage is only readable from an open tab of the source's origin. With no such tab, it's skipped and noted in `errors`.
 - Chrome alarms fire at most every 30s, so shorter intervals behave as 30s.
+- The toolbar badge shows status; hover it for details:
+  - none: last sync worked (tooltip shows the time)
+  - red `DOWN`: server not reachable on 127.0.0.1:47123 (tooltip shows how to start it)
+  - orange `ERR`: server rejected a push, a cookie is missing (logged out), or localStorage couldn't be read
+
+## Run at login (macOS)
+
+Build to a path outside `~/Desktop`, `~/Documents` and `~/Downloads` (macOS privacy protection blocks launchd jobs from opening binaries there), e.g. `go build -o ~/.local/bin/chrome-bridge .`. Create `~/Library/LaunchAgents/com.<you>.chrome-bridge.plist` with `ProgramArguments` pointing at it, `RunAtLoad` and `KeepAlive` true, then:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.<you>.chrome-bridge.plist
+launchctl kickstart -k gui/$(id -u)/com.<you>.chrome-bridge   # restart after a rebuild
+```
 
 ## Security
 
