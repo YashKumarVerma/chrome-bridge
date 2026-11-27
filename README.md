@@ -14,9 +14,8 @@ Chrome extension ──every N── GET /config ──▶ chrome-bridge (Go, 12
 
 ```bash
 go build -o chrome-bridge .
-mkdir -p ~/.config/chrome-bridge
-cp config.example.yaml ~/.config/chrome-bridge/config.yaml   # then edit
-./chrome-bridge                                              # -config <path> to override
+cp config.example.yaml config.yaml   # then edit; config.yaml is gitignored
+./chrome-bridge -config config.yaml  # default without -config: ~/.config/chrome-bridge/config.yaml
 ```
 
 In Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `extension/`.
@@ -66,7 +65,7 @@ Output (`<out_dir>/<name>.json`, mode 0600):
 
 ## Run at login (macOS)
 
-Build to a path outside `~/Desktop`, `~/Documents` and `~/Downloads` (macOS privacy protection blocks launchd jobs from opening binaries there), e.g. `go build -o ~/.local/bin/chrome-bridge .`. Create `~/Library/LaunchAgents/com.<you>.chrome-bridge.plist` with `ProgramArguments` pointing at it, `RunAtLoad` and `KeepAlive` true, then:
+Build to a path outside `~/Desktop`, `~/Documents` and `~/Downloads` (macOS privacy protection blocks launchd jobs from opening binaries there), e.g. `go build -o ~/.local/bin/chrome-bridge .`. Create `~/Library/LaunchAgents/com.<you>.chrome-bridge.plist` with `ProgramArguments` pointing at it, plus `-config` and the absolute path of your `config.yaml`, `RunAtLoad` and `KeepAlive` true, then:
 
 ```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.<you>.chrome-bridge.plist
@@ -76,7 +75,7 @@ launchctl kickstart -k gui/$(id -u)/com.<you>.chrome-bridge   # restart after a 
 ## Security
 
 - The server binds to `127.0.0.1` only.
-- Every request must carry a `chrome-extension://` Origin, which web pages cannot forge; set `extension_id` to pin it to your install.
+- Every request must carry an `X-Chrome-Bridge: 1` header, which web pages can't add to cross-origin requests. Any `Origin` present must be `chrome-extension://`, pinned to your install when `extension_id` is set. Rejections are logged with the reason.
 - Files are written 0600. Values are never logged.
 - The extension holds `<all_urls>` host permission so new sources work without editing the manifest. It only collects sources listed in your config and only sends them to localhost. Anything that can write your config or bind the port first can request your cookies; treat both accordingly.
 

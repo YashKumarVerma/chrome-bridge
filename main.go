@@ -101,10 +101,22 @@ func handler(cfgPath string) http.Handler {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			// Web pages can't forge a chrome-extension:// Origin, so sites you browse can't read or plant data.
-			want := "chrome-extension://" + cfg.ExtensionID
-			if o := r.Header.Get("Origin"); !strings.HasPrefix(o, "chrome-extension://") || (cfg.ExtensionID != "" && o != want) {
-				http.Error(w, "forbidden", 403)
+			// A web page can't add a custom header to a cross-origin request without a CORS preflight,
+			// which this server never approves. Chrome omits Origin on extension GETs, so it's only
+			// checked when present.
+			o := r.Header.Get("Origin")
+			why := ""
+			switch {
+			case r.Header.Get("X-Chrome-Bridge") != "1":
+				why = "missing X-Chrome-Bridge header"
+			case o != "" && !strings.HasPrefix(o, "chrome-extension://"):
+				why = "non-extension origin"
+			case o != "" && cfg.ExtensionID != "" && o != "chrome-extension://"+cfg.ExtensionID:
+				why = "extension_id mismatch"
+			}
+			if why != "" {
+				log.Printf("403 %s %s origin=%q: %s", r.Method, r.URL.Path, o, why)
+				http.Error(w, "forbidden: "+why, 403)
 				return
 			}
 			next(w, r, cfg)

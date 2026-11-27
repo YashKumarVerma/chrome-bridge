@@ -8,15 +8,15 @@ Pipes cookies and localStorage from the user's Chrome to local files, so scripts
 - `main_test.go`: one test covering origin check, config, unknown source, push, write targets and `/status` (including that it leaks no values).
 - `extension/background.js`: every 30s alarm fetches `/config`, collects due sources, POSTs each; pushes immediately when a watched cookie changes. Sets the badge (`DOWN` red, `ERR` orange) and keeps per-source state in `chrome.storage.local` for the popup.
 - `extension/popup.{html,js}`: toolbar popup, plain HTML/CSS/JS (no framework, no build). Polls `/status` every 5s; shows server live/down, address, uptime, paths, and each site's last sync, cookie counts and errors. "Sync now" messages the background to force a full sync.
-- `config.example.yaml`: documented config; live copy at `~/.config/chrome-bridge/config.yaml`.
+- `config.example.yaml`: documented config. The live config is `config.yaml` in this folder (gitignored, holds personal sites); the LaunchAgent passes `-config` pointing at it. Output data stays in `~/.config/chrome-bridge/data`.
 
 ## Commands
 
 ```bash
 go test ./...                      # must pass before any change is done
 go build -o ~/.local/bin/chrome-bridge .   # the binary launchd runs
-~/.local/bin/chrome-bridge [-config path] # manual run; default ~/.config/chrome-bridge/config.yaml
-curl -s -H 'Origin: chrome-extension://x' 127.0.0.1:47123/config   # inspect what the extension sees
+~/.local/bin/chrome-bridge -config config.yaml   # manual run (default without -config: ~/.config/chrome-bridge/config.yaml)
+curl -s -H 'X-Chrome-Bridge: 1' 127.0.0.1:47123/config   # inspect what the extension sees
 ```
 
 After editing `extension/`, reload it in `chrome://extensions`. YAML edits need no restart or reload.
@@ -24,7 +24,7 @@ After editing `extension/`, reload it in `chrome://extensions`. YAML edits need 
 ## Invariants (don't break)
 
 - Listen on `127.0.0.1` only. Port 47123 is the default in `listen` and in `DEFAULT_BRIDGE` (`extension/background.js`, `extension/popup.js`). Users can point the extension elsewhere from the popup's Settings (stored as `bridge` in `chrome.storage.local`).
-- Every endpoint requires an `Origin: chrome-extension://...` header (pinned to `extension_id` when set). This is what stops web pages from reading or planting data. Never add CORS headers or an endpoint without the guard.
+- Every endpoint requires `X-Chrome-Bridge: 1` (web pages can't add custom headers cross-origin without a CORS preflight, which the server never approves). `Origin` is checked only when present, because Chrome omits it on extension GETs: it must be `chrome-extension://`, and equal `extension_id` when that is set. Rejections are logged with the reason. Never add CORS headers or an endpoint outside the guard.
 - Source names must not contain path separators; they become file names.
 - Never log or print cookie/localStorage values. Log counts only.
 - Push bodies are capped at 5 MB.

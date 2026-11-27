@@ -10,7 +10,7 @@ async function call(path, opts) {
   const base = await bridgeURL();
   let r;
   try {
-    r = await fetch(base + path, opts);
+    r = await fetch(base + path, { ...opts, headers: { "X-Chrome-Bridge": "1" } });
   } catch {
     throw new BridgeDown(`chrome-bridge server not reachable at ${base}`);
   }

@@ -25,7 +25,12 @@ sources:
 	h := handler(cfg)
 	do := func(method, path, origin, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Origin", origin)
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		if origin != "nohdr" {
+			r.Header.Set("X-Chrome-Bridge", "1")
+		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w
@@ -34,6 +39,12 @@ sources:
 
 	if c := do("GET", "/config", "https://evil.example", "").Code; c != 403 {
 		t.Fatalf("web origin got %d", c)
+	}
+	if c := do("POST", "/push", "nohdr", `{"name":"mb"}`).Code; c != 403 {
+		t.Fatalf("missing header got %d", c)
+	}
+	if c := do("GET", "/config", "", "").Code; c != 200 {
+		t.Fatalf("extension GET without Origin got %d", c)
 	}
 	if w := do("GET", "/config", ext, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"every_seconds":300`) {
 		t.Fatalf("config: %d %s", w.Code, w.Body)

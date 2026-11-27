@@ -25,7 +25,7 @@ function every(sec) {
 
 async function fetchStatus() {
   try {
-    const r = await fetch(BRIDGE + "/status");
+    const r = await fetch(BRIDGE + "/status", { headers: { "X-Chrome-Bridge": "1" } });
     if (!r.ok) return { error: `HTTP ${r.status}: ${(await r.text()).trim()}` };
     return { status: await r.json() };
   } catch {
