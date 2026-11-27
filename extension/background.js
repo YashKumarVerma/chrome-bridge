@@ -150,8 +150,13 @@ function loginFiller(name) {
     } else if (!done.has("password") && visible('input[name="password"]')) {
       done.add("password");
       const { password } = await ask("creds");
-      set(visible('input[name="password"]'), password);
-      click('[data-automation="loginButton"]');
+      const el = visible('input[name="password"]');
+      set(el, password);
+      // Chrome's saved-password autofill can overwrite the field before the click; re-assert it.
+      setTimeout(() => {
+        if (el.value !== password) set(el, password);
+        document.querySelector('[data-automation="loginButton"]')?.click();
+      }, 300);
     } else if (!done.has("email") && visible('input[name="email"]')) {
       done.add("email");
       const { email } = await ask("creds");
@@ -168,10 +173,55 @@ const loginFor = async (url) => {
   return logins.find((l) => url?.startsWith(l.match.replace(/\*$/, "")) && !loginBlocked[l.name]);
 };
 
+// The IdP drops its redirect when its login flow restarts and parks the tab on its portal (`done`).
+// Remember the URL the tab opened before the IdP took over, and go back there once logged in so SSO finishes.
+const site = (u) => new URL(u).hostname.split(".").slice(-2).join(".");
+chrome.webNavigation.onBeforeNavigate.addListener(async ({ tabId, frameId, url }) => {
+  if (frameId !== 0 || !url.startsWith("http")) return;
+  const { logins = [] } = await chrome.storage.local.get("logins");
+  if (logins.some((l) => site(l.match) === site(url))) return;
+  const { lastNav = {} } = await chrome.storage.session.get("lastNav");
+  await chrome.storage.session.set({ lastNav: { ...lastNav, [tabId]: url } });
+});
+
+const nextHost = (url) => {
+  try {
+    return new URL(new URL(url).searchParams.get("next"), url).hostname;
+  } catch {
+    return "";
+  }
+};
+
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (info.status !== "complete" && !info.url) return;
+  const { logins = [] } = await chrome.storage.local.get("logins");
+  const { lastNav = {}, resume = {} } = await chrome.storage.session.get(["lastNav", "resume"]);
+  if (logins.some((l) => tab.url?.startsWith(l.match.replace(/\*$/, ""))) && lastNav[tabId] && !resume[tabId]) {
+    await chrome.storage.session.set({ resume: { ...resume, [tabId]: { url: lastNav[tabId], at: Date.now() } } });
+  }
+  const r = resume[tabId];
+  if (r && logins.some((l) => l.done && tab.url?.startsWith(l.done))) {
+    delete resume[tabId];
+    await chrome.storage.session.set({ resume });
+    // ponytail: 10 min cap so a stale bounce can't fire later; roughly an OIDC login's lifetime.
+    if (Date.now() - r.at < 600000) return chrome.tabs.update(tabId, { url: r.url });
+  }
+  if (info.status === "complete") {
+    const c = logins.flatMap((l) => l.confirm || []).find((c) => tab.url?.startsWith(c.match) && nextHost(tab.url) === c.next_host);
+    if (c) {
+      return chrome.scripting
+        .executeScript({ target: { tabId }, func: (sel) => document.querySelector(sel)?.click(), args: [c.click] })
+        .catch((e) => console.warn(e));
+    }
+  }
   const l = await loginFor(tab.url);
   if (l) chrome.scripting.executeScript({ target: { tabId }, func: loginFiller, args: [l.name] }).catch((e) => console.warn(e));
+});
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const { lastNav = {}, resume = {} } = await chrome.storage.session.get(["lastNav", "resume"]);
+  delete lastNav[tabId];
+  delete resume[tabId];
+  await chrome.storage.session.set({ lastNav, resume });
 });
 
 // Only our injected filler can message us (no externally_connectable); still require the sender tab to be on the login URL.

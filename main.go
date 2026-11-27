@@ -42,9 +42,19 @@ type Source struct {
 
 type Login struct {
 	Name     string `yaml:"name" json:"name"`
+	Match    string    `yaml:"match" json:"match"`
+	Done     string    `yaml:"done" json:"done,omitempty"`       // optional: IdP portal a finished login lands on; the tab goes back to where the flow started
+	Confirm  []Confirm `yaml:"confirm" json:"confirm,omitempty"` // optional: interstitials to click through after login
+	Keychain string    `yaml:"keychain" json:"-"`
+	TOTPSeed string    `yaml:"totp_seed" json:"-"` // optional; falls back to Keychain account totp_seed
+}
+
+// A redirect-confirm page is clicked only when its `next` query param points at NextHost,
+// so the site's open-redirect guard still stops every other target.
+type Confirm struct {
 	Match    string `yaml:"match" json:"match"`
-	Keychain string `yaml:"keychain" json:"-"`
-	TOTPSeed string `yaml:"totp_seed" json:"-"` // optional; falls back to Keychain account totp_seed
+	Click    string `yaml:"click" json:"click"`
+	NextHost string `yaml:"next_host" json:"next_host"`
 }
 
 type VPN struct {

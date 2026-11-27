@@ -28,6 +28,10 @@ logins:
   - name: jc
     match: https://console.jumpcloud.com/login
     keychain: jc-test
+    confirm:
+      - match: https://pam.example.com/core/redirect/confirm/
+        click: a.btn-primary
+        next_host: localhost
     totp_seed: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
 vpn:
   probe: http://127.0.0.1:1
@@ -103,7 +107,7 @@ vpn:
 	if c := do(req{method: "GET", path: "/data/mb", secret: "nope"}).Code; c != 401 {
 		t.Fatalf("unsigned data got %d", c)
 	}
-	if w := do(req{method: "GET", path: "/logins"}); w.Code != 200 || w.Body.String() != `[{"name":"jc","match":"https://console.jumpcloud.com/login"}]` {
+	if w := do(req{method: "GET", path: "/logins"}); w.Code != 200 || w.Body.String() != `[{"name":"jc","match":"https://console.jumpcloud.com/login","confirm":[{"match":"https://pam.example.com/core/redirect/confirm/","click":"a.btn-primary","next_host":"localhost"}]}]` {
 		t.Fatalf("logins: %d %s", w.Code, w.Body)
 	}
 	if w := do(req{method: "POST", path: "/login/jc"}); w.Code != 200 || w.Body.String() != `{"email":"jc-test/email","password":"jc-test/password"}` {

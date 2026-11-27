@@ -33,3 +33,8 @@ logins:
     match: https://console.jumpcloud.com/login*   # prefix; trailing * optional
     keychain: chrome-bridge-jumpcloud
     # totp_seed: BASE32SEED                     # optional: use this instead of the Keychain totp_seed (plain text; keep config.yaml 0600)
+    done: https://console.jumpcloud.com/userconsole  # optional: if a login ends on this portal, the tab goes back to the URL that started the flow
+    confirm:                                    # optional: click through redirect-confirm interstitials after login
+      - match: https://pam.example.com/core/redirect/confirm/
+        click: a.btn-primary                    # CSS selector of the confirm button
+        next_host: localhost                    # only when the page's ?next= points at this host
