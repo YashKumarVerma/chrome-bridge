@@ -42,8 +42,10 @@
   button { font: inherit; font-weight: 600; background: var(--btn); color: var(--btn-fg); border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
   details { padding: 0 14px 10px; }
   summary { cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 4px 0; }
-  form { display: flex; gap: 6px; margin-top: 6px; }
-  input { flex: 1; min-width: 0; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  form { margin-top: 6px; }
+  .fields { display: grid; gap: 6px; }
+  .actions { display: flex; gap: 6px; margin-top: 6px; }
+  input { width: 100%; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   input:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
   button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
   .note { font-size: 12px; margin-top: 6px; }
@@ -55,17 +57,22 @@
   <header><h1>Chrome Bridge</h1><span id="pill" class="pill idle">Checking</span></header>
   <section id="server"></section>
   <section><h2>Sites</h2><div id="sites"></div></section>
-  <details>
+  <details id="settings-box">
     <summary>Settings</summary>
     <form id="settings">
-      <input id="url" type="url" aria-label="chrome-bridge server URL" spellcheck="false" placeholder="http://127.0.0.1:47123">
-      <button type="submit">Save</button>
-      <button type="button" class="ghost" id="reset">Reset</button>
+      <div class="fields">
+        <input id="url" type="url" aria-label="chrome-bridge server URL" spellcheck="false" placeholder="http://127.0.0.1:47123">
+        <input id="secret" type="password" aria-label="Shared secret" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button type="button" class="ghost" id="reset" title="Reset URL to default; keeps the secret">Reset URL</button>
+      </div>
     </form>
     <div id="url-warn" class="note err" hidden>Not localhost: cookies will travel over the network. Use https and a server you control.</div>
     <div id="url-msg" class="note meta" aria-live="polite"></div>
   </details>
   <footer><span id="updated"></span><button id="sync">Sync now</button></footer>
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@
 listen: 127.0.0.1:47123             # extension hardcodes this port
 out_dir: ~/.config/chrome-bridge/data  # each source lands in <out_dir>/<name>.json (0600)
 extension_id: ""                    # optional: pin to your extension's id from chrome://extensions
+secret: ""                          # required: shared with the extension (popup → Settings); use a long random string
 
 sources:
   - name: metabase                  # file name + log label; no slashes

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <!-- bridge -->
+  <path d="M18 84 Q64 26 110 84" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+  <g stroke="#fff" stroke-width="4" stroke-linecap="round">
+    <line x1="42" y1="64" x2="42" y2="84"/>
+    <line x1="64" y1="56" x2="64" y2="84"/>
+    <line x1="86" y1="64" x2="86" y2="84"/>
+  </g>
+  <rect x="10" y="82" width="108" height="9" rx="4.5" fill="#fff"/>
+  <rect x="22" y="88" width="9" height="22" rx="3" fill="#fff"/>
+  <rect x="97" y="88" width="9" height="22" rx="3" fill="#fff"/>
+  <!-- cookie crossing -->
+  <circle cx="64" cy="34" r="17" fill="#f4b860" stroke="#a8692a" stroke-width="3"/>
+  <g fill="#6b3f17">
+    <circle cx="57" cy="29" r="3"/>
+    <circle cx="70" cy="27" r="2.5"/>
+    <circle cx="67" cy="40" r="3"/>
+    <circle cx="57" cy="40" r="2"/>
+  </g>
+</svg>

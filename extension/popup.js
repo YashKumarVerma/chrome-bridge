@@ -1,4 +1,5 @@
-const DEFAULT_BRIDGE = "http://127.0.0.1:47123";
+import { call, settings, DEFAULT_BRIDGE, BridgeDown, AuthError } from "./bridge.js";
+
 let BRIDGE = DEFAULT_BRIDGE;
 const FIX = "launchctl kickstart -k gui/$(id -u)/com.yashkumarverma.chrome-bridge";
 const $ = (id) => document.getElementById(id);
@@ -25,15 +26,15 @@ function every(sec) {
 
 async function fetchStatus() {
   try {
-    const r = await fetch(BRIDGE + "/status", { headers: { "X-Chrome-Bridge": "1" } });
-    if (!r.ok) return { error: `HTTP ${r.status}: ${(await r.text()).trim()}` };
-    return { status: await r.json() };
-  } catch {
-    return { down: true };
+    return { status: JSON.parse(await call("/status")) };
+  } catch (e) {
+    if (e instanceof BridgeDown) return { down: true };
+    if (e instanceof AuthError) return { auth: e.message };
+    return { error: e.message };
   }
 }
 
-function renderServer({ status, down, error }) {
+function renderServer({ status, down, error, auth }) {
   const pill = $("pill");
   const server = $("server");
   server.replaceChildren(h("h2", { textContent: "Server" }));
@@ -44,6 +45,11 @@ function renderServer({ status, down, error }) {
       h("code", { textContent: FIX }),
       h("div", { className: "meta", textContent: "Log: ~/Library/Logs/chrome-bridge.log" }),
     );
+    return;
+  }
+  if (auth) {
+    pill.className = "pill bad"; pill.textContent = "Auth";
+    server.append(h("div", { className: "err", textContent: auth }));
     return;
   }
   if (error) {
@@ -88,26 +94,33 @@ function isLoopback(u) {
   return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(u).hostname);
 }
 
-function renderSettings() {
-  $("url").value = BRIDGE;
-  $("url-warn").hidden = isLoopback(BRIDGE);
+async function renderSettings() {
+  const { base, secret } = await settings();
+  BRIDGE = base;
+  $("url").value = base;
+  $("url-warn").hidden = isLoopback(base);
+  $("secret").value = "";
+  $("secret").placeholder = secret ? "Secret saved (type to replace)" : "Shared secret from config.yaml";
 }
 
-async function saveURL(raw) {
+// Empty secret field keeps the saved one.
+async function save(rawURL, rawSecret) {
   const msg = $("url-msg");
   let u;
   try {
-    u = new URL(raw.trim());
+    u = new URL(rawURL.trim());
     if (!/^https?:$/.test(u.protocol)) throw 0;
   } catch {
     msg.textContent = "Enter an http(s) URL, e.g. " + DEFAULT_BRIDGE;
     return;
   }
-  BRIDGE = u.origin;
-  await chrome.storage.local.set({ bridge: BRIDGE });
+  const update = { bridge: u.origin };
+  if (rawSecret) update.secret = rawSecret;
+  await chrome.storage.local.set(update);
   msg.textContent = "Saved.";
-  renderSettings();
+  await renderSettings();
   render();
+  if (rawSecret) chrome.runtime.sendMessage("sync");
 }
 
 async function render() {
@@ -118,8 +131,8 @@ async function render() {
   $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
 }
 
-$("settings").addEventListener("submit", (e) => (e.preventDefault(), saveURL($("url").value)));
-$("reset").addEventListener("click", () => saveURL(DEFAULT_BRIDGE));
+$("settings").addEventListener("submit", (e) => (e.preventDefault(), save($("url").value, $("secret").value)));
+$("reset").addEventListener("click", () => save(DEFAULT_BRIDGE, ""));
 
 $("sync").addEventListener("click", async () => {
   const b = $("sync");
@@ -129,9 +142,9 @@ $("sync").addEventListener("click", async () => {
   b.disabled = false; b.textContent = "Sync now";
 });
 
-chrome.storage.local.get("bridge").then(({ bridge }) => {
-  BRIDGE = bridge || DEFAULT_BRIDGE;
-  renderSettings();
+renderSettings().then(async () => {
+  // First run: open Settings so the secret can be entered.
+  if (!(await settings()).secret) $("settings-box").open = true;
   render();
   setInterval(render, 5000);
 });

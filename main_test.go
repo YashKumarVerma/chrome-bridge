@@ -4,8 +4,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBridge(t *testing.T) {
@@ -13,6 +15,7 @@ func TestBridge(t *testing.T) {
 	cfg := filepath.Join(dir, "c.yaml")
 	os.WriteFile(cfg, []byte(`
 out_dir: `+dir+`/data
+secret: test-secret
 sources:
   - name: mb
     url: https://metabase.famapp.in
@@ -23,43 +26,55 @@ sources:
         to: `+dir+`/session
 `), 0o600)
 	h := handler(cfg)
-	do := func(method, path, origin, body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		if origin != "" {
-			r.Header.Set("Origin", origin)
+	type req struct {
+		method, path, origin, body, secret string
+		age                                time.Duration
+	}
+	do := func(q req) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(q.method, q.path, strings.NewReader(q.body))
+		if q.origin != "" {
+			r.Header.Set("Origin", q.origin)
 		}
-		if origin != "nohdr" {
-			r.Header.Set("X-Chrome-Bridge", "1")
+		if q.secret == "" {
+			q.secret = "test-secret"
 		}
+		ts := strconv.FormatInt(time.Now().Add(-q.age).Unix(), 10)
+		r.Header.Set("X-Chrome-Bridge-Time", ts)
+		r.Header.Set("X-Chrome-Bridge-Sig", sign(q.secret, ts+"\n"+q.method+"\n"+q.path+"\n"+q.body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
+		if w.Code < 300 && w.Header().Get("X-Chrome-Bridge-Sig") != sign("test-secret", "resp\n"+ts+"\n"+w.Body.String()) {
+			t.Fatalf("%s %s: response not signed", q.method, q.path)
+		}
 		return w
 	}
 	ext := "chrome-extension://abc"
 
-	if c := do("GET", "/config", "https://evil.example", "").Code; c != 403 {
-		t.Fatalf("web origin got %d", c)
+	for name, c := range map[string]struct {
+		q    req
+		want int
+	}{
+		"web origin":      {req{method: "GET", path: "/config", origin: "https://evil.example"}, 403},
+		"wrong secret":    {req{method: "GET", path: "/config", secret: "nope"}, 401},
+		"stale timestamp": {req{method: "GET", path: "/config", age: 2 * time.Minute}, 401},
+		"unknown source":  {req{method: "POST", path: "/push", origin: ext, body: `{"name":"../x"}`}, 404},
+	} {
+		if got := do(c.q).Code; got != c.want {
+			t.Fatalf("%s: got %d want %d", name, got, c.want)
+		}
 	}
-	if c := do("POST", "/push", "nohdr", `{"name":"mb"}`).Code; c != 403 {
-		t.Fatalf("missing header got %d", c)
-	}
-	if c := do("GET", "/config", "", "").Code; c != 200 {
-		t.Fatalf("extension GET without Origin got %d", c)
-	}
-	if w := do("GET", "/config", ext, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"every_seconds":300`) {
+	if w := do(req{method: "GET", path: "/config"}); w.Code != 200 || !strings.Contains(w.Body.String(), `"every_seconds":300`) {
 		t.Fatalf("config: %d %s", w.Code, w.Body)
 	}
-	if c := do("POST", "/push", ext, `{"name":"../x"}`).Code; c != 404 {
-		t.Fatalf("unknown source got %d", c)
-	}
-	if c := do("POST", "/push", ext, `{"name":"mb","cookies":{"metabase.SESSION":"s3cret"}}`).Code; c != 204 {
+	if c := do(req{method: "POST", path: "/push", origin: ext, body: `{"name":"mb","cookies":{"metabase.SESSION":"s3cret"}}`}).Code; c != 204 {
 		t.Fatalf("push got %d", c)
 	}
-	if w := do("GET", "/status", ext, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"mb":{"at"`) {
-		t.Fatalf("status: %d %s", w.Code, w.Body)
+	st := do(req{method: "GET", path: "/status"})
+	if st.Code != 200 || !strings.Contains(st.Body.String(), `"mb":{"at"`) {
+		t.Fatalf("status: %d %s", st.Code, st.Body)
 	}
-	if strings.Contains(do("GET", "/status", ext, "").Body.String(), "s3cret") {
-		t.Fatal("status leaks values")
+	if strings.Contains(st.Body.String(), "s3cret") || strings.Contains(st.Body.String(), "test-secret") {
+		t.Fatal("status leaks values or the shared secret")
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "session")); string(b) != "s3cret" {
 		t.Fatalf("write target = %q", b)

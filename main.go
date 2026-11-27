@@ -1,13 +1,18 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +39,7 @@ type Config struct {
 	Listen      string   `yaml:"listen"`
 	OutDir      string   `yaml:"out_dir"`
 	ExtensionID string   `yaml:"extension_id"`
+	Secret      string   `yaml:"secret"`
 	Sources     []Source `yaml:"sources"`
 }
 
@@ -63,6 +69,9 @@ func load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, err
 	}
+	if c.Secret == "" {
+		return nil, fmt.Errorf("secret is required in %s", path)
+	}
 	c.OutDir = expand(c.OutDir)
 	for i := range c.Sources {
 		s := &c.Sources[i]
@@ -82,6 +91,15 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+func sign(secret, msg string) string {
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(msg))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// Max clock skew between extension and server for a signed request.
+const skew = 60
+
 type lastPush struct {
 	At           time.Time `json:"at"`
 	Cookies      int       `json:"cookies"`
@@ -94,50 +112,74 @@ func handler(cfgPath string) http.Handler {
 	started := time.Now()
 	var mu sync.Mutex
 	pushes := map[string]lastPush{}
-	guard := func(next func(http.ResponseWriter, *http.Request, *Config)) http.HandlerFunc {
+	type fn func(r *http.Request, cfg *Config, body []byte) (int, []byte)
+	// The secret never crosses the wire: requests carry HMAC(secret, time+method+path+body), and
+	// responses HMAC(secret, "resp"+time+body) so the extension can tell this server from a port squatter.
+	guard := func(next fn) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			cfg, err := load(cfgPath)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			// A web page can't add a custom header to a cross-origin request without a CORS preflight,
-			// which this server never approves. Chrome omits Origin on extension GETs, so it's only
-			// checked when present.
-			o := r.Header.Get("Origin")
-			why := ""
-			switch {
-			case r.Header.Get("X-Chrome-Bridge") != "1":
-				why = "missing X-Chrome-Bridge header"
-			case o != "" && !strings.HasPrefix(o, "chrome-extension://"):
-				why = "non-extension origin"
-			case o != "" && cfg.ExtensionID != "" && o != "chrome-extension://"+cfg.ExtensionID:
-				why = "extension_id mismatch"
-			}
-			if why != "" {
-				log.Printf("403 %s %s origin=%q: %s", r.Method, r.URL.Path, o, why)
-				http.Error(w, "forbidden: "+why, 403)
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 5<<20))
+			if err != nil {
+				http.Error(w, err.Error(), 400)
 				return
 			}
-			next(w, r, cfg)
+			deny := func(code int, why string) {
+				log.Printf("%d %s %s origin=%q: %s", code, r.Method, r.URL.Path, r.Header.Get("Origin"), why)
+				http.Error(w, http.StatusText(code)+": "+why, code)
+			}
+			// Chrome omits Origin on extension GETs, so it's only checked when present.
+			if o := r.Header.Get("Origin"); o != "" {
+				if !strings.HasPrefix(o, "chrome-extension://") {
+					deny(403, "non-extension origin")
+					return
+				}
+				if cfg.ExtensionID != "" && o != "chrome-extension://"+cfg.ExtensionID {
+					deny(403, "extension_id mismatch")
+					return
+				}
+			}
+			ts := r.Header.Get("X-Chrome-Bridge-Time")
+			t, err := strconv.ParseInt(ts, 10, 64)
+			if err != nil || time.Since(time.Unix(t, 0)).Abs() > skew*time.Second {
+				deny(401, "missing or stale X-Chrome-Bridge-Time")
+				return
+			}
+			want := sign(cfg.Secret, ts+"\n"+r.Method+"\n"+r.URL.Path+"\n"+string(body))
+			if !hmac.Equal([]byte(want), []byte(r.Header.Get("X-Chrome-Bridge-Sig"))) {
+				deny(401, "bad signature (shared secret mismatch?)")
+				return
+			}
+			code, resp := next(r, cfg, body)
+			w.Header().Set("X-Chrome-Bridge-Sig", sign(cfg.Secret, "resp\n"+ts+"\n"+string(resp)))
+			w.Header().Set("Access-Control-Expose-Headers", "X-Chrome-Bridge-Sig")
+			if code != 204 {
+				w.Header().Set("Content-Type", "application/json")
+			}
+			w.WriteHeader(code)
+			w.Write(resp)
 		}
 	}
-	mux.HandleFunc("GET /config", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
-		json.NewEncoder(w).Encode(cfg.Sources)
+	mux.HandleFunc("GET /config", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		b, _ := json.Marshal(cfg.Sources)
+		return 200, b
 	}))
-	mux.HandleFunc("GET /status", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
+	mux.HandleFunc("GET /status", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
 		mu.Lock()
 		defer mu.Unlock()
-		json.NewEncoder(w).Encode(map[string]any{
+		b, _ := json.Marshal(map[string]any{
 			"started_at": started, "config": cfgPath, "out_dir": cfg.OutDir, "listen": cfg.Listen,
 			"sources": cfg.Sources, "pushes": pushes,
 		})
+		return 200, b
 	}))
-	mux.HandleFunc("POST /push", guard(func(w http.ResponseWriter, r *http.Request, cfg *Config) {
+	mux.HandleFunc("POST /push", guard(func(r *http.Request, cfg *Config, body []byte) (int, []byte) {
 		var p Push
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 5<<20)).Decode(&p); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
+		if err := json.Unmarshal(body, &p); err != nil {
+			return 400, []byte(err.Error())
 		}
 		var src *Source
 		for i := range cfg.Sources {
@@ -146,14 +188,12 @@ func handler(cfgPath string) http.Handler {
 			}
 		}
 		if src == nil || strings.ContainsAny(p.Name, `/\`) {
-			http.Error(w, "unknown source", 404)
-			return
+			return 404, []byte("unknown source")
 		}
 		p.FetchedAt = time.Now()
 		b, _ := json.MarshalIndent(p, "", "  ")
 		if err := writeFile(filepath.Join(cfg.OutDir, p.Name+".json"), b); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+			return 500, []byte(err.Error())
 		}
 		for _, wr := range src.Write {
 			kind, key, _ := strings.Cut(wr.From, ":")
@@ -169,7 +209,7 @@ func handler(cfgPath string) http.Handler {
 		pushes[p.Name] = lastPush{p.FetchedAt, len(p.Cookies), len(p.LocalStorage), p.Errors}
 		mu.Unlock()
 		log.Printf("%s: %d cookies, %d localStorage, %d errors", p.Name, len(p.Cookies), len(p.LocalStorage), len(p.Errors))
-		w.WriteHeader(204)
+		return 204, nil
 	}))
 	return mux
 }

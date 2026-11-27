@@ -1,22 +1,6 @@
-const DEFAULT_BRIDGE = "http://127.0.0.1:47123";
+import { call, BridgeDown, AuthError } from "./bridge.js";
+
 const FIX_DOWN = "Start it: launchctl kickstart -k gui/$(id -u)/com.yashkumarverma.chrome-bridge (log: ~/Library/Logs/chrome-bridge.log)";
-
-// Server URL is set from the popup; stored without a trailing slash.
-const bridgeURL = async () => (await chrome.storage.local.get("bridge")).bridge || DEFAULT_BRIDGE;
-
-class BridgeDown extends Error {}
-
-async function call(path, opts) {
-  const base = await bridgeURL();
-  let r;
-  try {
-    r = await fetch(base + path, { ...opts, headers: { "X-Chrome-Bridge": "1" } });
-  } catch {
-    throw new BridgeDown(`chrome-bridge server not reachable at ${base}`);
-  }
-  if (!r.ok) throw new Error(`${path}: HTTP ${r.status} ${(await r.text()).trim()}`);
-  return r;
-}
 
 function status(badge, color, title) {
   chrome.action.setBadgeText({ text: badge });
@@ -29,6 +13,11 @@ function report(problems) {
   if (down) {
     console.warn(down.message);
     return status("DOWN", "#d93025", `${down.message}\n${FIX_DOWN}`);
+  }
+  const auth = problems.find((p) => p instanceof AuthError);
+  if (auth) {
+    console.warn(auth.message);
+    return status("KEY", "#d93025", auth.message);
   }
   const msgs = problems.map((p) => p.message || String(p));
   if (msgs.length) {
@@ -84,7 +73,8 @@ async function saveState(name, st) {
 async function tick(force = false) {
   const problems = [];
   try {
-    const sources = await (await call("/config")).json();
+    // Only a verified (signed) config is acted on, so a port squatter can't choose what gets collected.
+    const sources = JSON.parse(await call("/config"));
     const { last = {} } = await chrome.storage.local.get("last");
     await chrome.storage.local.set({ sources });
     const now = Date.now();
@@ -94,7 +84,7 @@ async function tick(force = false) {
         problems.push(...(await collect(s)));
         last[s.name] = now;
       } catch (e) {
-        if (e instanceof BridgeDown) throw e;
+        if (e instanceof BridgeDown || e instanceof AuthError) throw e;
         await saveState(s.name, { at: Date.now(), errors: [e.message] });
         problems.push(new Error(`${s.name}: ${e.message}`));
       }
@@ -118,6 +108,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 });
 
 // A configured cookie changed (e.g. fresh login): push that source now instead of waiting.
+// `sources` in storage only ever comes from a verified /config.
 chrome.cookies.onChanged.addListener(async ({ cookie, removed }) => {
   if (removed) return;
   const { sources = [] } = await chrome.storage.local.get("sources");

@@ -14,12 +14,12 @@ Chrome extension ──every N── GET /config ──▶ chrome-bridge (Go, 12
 
 ```bash
 go build -o chrome-bridge .
-cp config.example.yaml config.yaml   # then edit; config.yaml is gitignored
+cp config.example.yaml config.yaml   # then edit, set `secret`; config.yaml is gitignored
 ./chrome-bridge -config config.yaml  # default without -config: ~/.config/chrome-bridge/config.yaml
 ```
 
 In Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `extension/`.
-Click the extension icon for the status popup: server live/down, uptime, config paths, and each site's last sync, cookie counts and errors. **Sync now** forces a full sync. **Settings** sets the server URL (default `http://127.0.0.1:47123`) if you change `listen`.
+Click the extension icon for the status popup: server live/down, uptime, config paths, and each site's last sync, cookie counts and errors. **Sync now** forces a full sync. **Settings** holds the shared secret and the server URL (default `http://127.0.0.1:47123`).
 
 ## Config
 
@@ -27,6 +27,7 @@ Click the extension icon for the status popup: server live/down, uptime, config 
 listen: 127.0.0.1:47123
 out_dir: ~/.config/chrome-bridge/data
 extension_id: ""                  # optional: accept only this extension's id
+secret: "<long random string>"    # required; enter the same value in the popup's Settings
 
 sources:
   - name: example                 # output file name: <out_dir>/example.json
@@ -61,6 +62,7 @@ Output (`<out_dir>/<name>.json`, mode 0600):
 - The toolbar badge shows status; hover it for details:
   - none: last sync worked (tooltip shows the time)
   - red `DOWN`: server not reachable on 127.0.0.1:47123 (tooltip shows how to start it)
+  - red `KEY`: no secret set, the server rejected it, or the response wasn't signed with it
   - orange `ERR`: server rejected a push, a cookie is missing (logged out), or localStorage couldn't be read
 
 ## Run at login (macOS)
@@ -75,9 +77,10 @@ launchctl kickstart -k gui/$(id -u)/com.<you>.chrome-bridge   # restart after a 
 ## Security
 
 - The server binds to `127.0.0.1` only.
-- Every request must carry an `X-Chrome-Bridge: 1` header, which web pages can't add to cross-origin requests. Any `Origin` present must be `chrome-extension://`, pinned to your install when `extension_id` is set. Rejections are logged with the reason.
+- Requests and responses are signed with HMAC-SHA256 over a shared `secret` set in `config.yaml` and entered once in the popup's Settings. The secret itself never crosses the wire. The server rejects unsigned or stale (over 60s) requests, and the extension ignores responses that aren't signed with the secret, so another process squatting on the port can't direct what it collects.
+- Any `Origin` present must be `chrome-extension://`, pinned to your install when `extension_id` is set. Rejections are logged with the reason.
 - Files are written 0600. Values are never logged.
-- The extension holds `<all_urls>` host permission so new sources work without editing the manifest. It only collects sources listed in your config and only sends them to localhost. Anything that can write your config or bind the port first can request your cookies; treat both accordingly.
+- The extension holds `<all_urls>` host permission so new sources work without editing the manifest. It only collects sources from a config signed with your secret. Anything that can read or write your `config.yaml` has the secret; keep it 0600.
 
 ## Development
 
