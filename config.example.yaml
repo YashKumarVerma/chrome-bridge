@@ -8,10 +8,28 @@ secret: ""                          # required: shared with the extension (popup
 
 sources:
   - name: metabase                  # file name + log label; no slashes
-    url: https://metabase.famapp.in # cookies are read for this URL; localStorage from an open tab on its origin
+    url: https://metabase.example.com # cookies are read for this URL; localStorage from an open tab on its origin
     every: 5m                       # Go duration (30s, 5m, 1h); minimum effective 30s
     cookies: [metabase.SESSION]     # cookie names, or ["*"] for all
     local_storage: []               # keys, or ["*"] for all; needs a tab of the site open
     write:                          # optional: also write single values to their own files
       - from: cookie:metabase.SESSION   # cookie:<name> or localStorage:<key>
         to: ~/.config/metabase/session
+
+# Optional: reconnect the VPN when an internal host stops answering. Re-read every tick.
+vpn:
+  probe: https://internal.example.com/health # any HTTP response = up; must only resolve on the VPN
+  every: 30s                                     # 2 failed probes in a row → run cmd (3m timeout, backoff 1m→15m)
+  cmd: [/bin/sh, -c, "/usr/local/bin/netbird down; /usr/local/bin/netbird up"]
+
+# Optional: the extension fills these login pages (email → password → TOTP).
+# Values live in macOS Keychain, never here:
+#   security add-generic-password -s chrome-bridge-jumpcloud -a email -w 'you@company.com'
+#   security add-generic-password -s chrome-bridge-jumpcloud -a password -w   # prompts
+#   security add-generic-password -s chrome-bridge-jumpcloud -a totp_seed -w  # base32 seed from the authenticator setup
+# A failed attempt pauses auto-login (badge ERR) until "Sync now" in the popup.
+logins:
+  - name: jumpcloud
+    match: https://console.jumpcloud.com/login*   # prefix; trailing * optional
+    keychain: chrome-bridge-jumpcloud
+    # totp_seed: BASE32SEED                     # optional: use this instead of the Keychain totp_seed (plain text; keep config.yaml 0600)

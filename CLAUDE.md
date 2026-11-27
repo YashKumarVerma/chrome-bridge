@@ -4,11 +4,13 @@ Pipes cookies and localStorage from the user's Chrome to local files, so scripts
 
 ## Layout
 
-- `main.go`: Go server. Reads the YAML on every request. `GET /config` (sources for the extension), `POST /push` (writes `<out_dir>/<name>.json` plus any `write:` targets, all 0600), `GET /status` (uptime, paths, last push per source: counts and errors only, never values), `GET /data` and `GET /data/{name}` (synced JSON for local workers; signed like every other endpoint, names limited to configured sources).
-- `main_test.go`: one test: origin check, wrong secret, stale timestamp, response signatures, config, unknown source, push, write targets, and that `/status` leaks no values or secret.
+- `main.go`: Go server. Reads the YAML on every request. `GET /config` (sources for the extension), `POST /push` (writes `<out_dir>/<name>.json` plus any `write:` targets, all 0600), `GET /status` (uptime, paths, last push per source: counts and errors only, never values), `GET /data` and `GET /data/{name}` (synced JSON for local workers; signed like every other endpoint, names limited to configured sources), `GET /logins` (name + URL match per login), `POST /login/{name}` (email + password from macOS Keychain) and `POST /login/{name}/otp` (TOTP from the login's `totp_seed` in YAML, else Keychain; never the same 30s window twice). A watchdog goroutine probes `vpn.probe` and runs `vpn.cmd` after 2 failures (3m timeout, backoff 1m→15m); state is in `/status.vpn`.
+- `main_test.go`: `TestBridge`: origin check, wrong secret, stale timestamp, response signatures, config, unknown source, push, write targets, `/data`, `/logins` (no seed), `/login`, VPN watchdog running `cmd`, and that `/status` leaks no values or secret. `TestTOTP`: RFC 6238 vectors.
 - `extension/bridge.js`: the only code that talks to the server: signs requests, verifies response signatures, raises `BridgeDown` / `AuthError`. Used by background and popup (both ES modules).
 - `extension/background.js`: every 30s alarm fetches `/config`, collects due sources, POSTs each; pushes immediately when a watched cookie changes. Sets the badge (`DOWN` red, `KEY` red for auth, `ERR` orange) and keeps per-source state in `chrome.storage.local` for the popup.
+- Auto-login (`background.js`): on a tab load or URL change matching a login's `match`, injects `loginFiller`, which fills the visible login step (email, password, MFA method, OTP) once per step; selectors are in `loginFiller`, asking the background for values by message. Still on the OTP step after 20s → that login is paused (`loginBlocked`) until Sync now.
 - `extension/popup.{html,js}`: toolbar popup, plain HTML/CSS/JS (no framework, no build). Polls `/status` every 5s; shows server live/down, address, uptime, paths, and each site's last sync, cookie counts and errors. "Sync now" messages the background to force a full sync.
+- `docs/` (gitignored, local only): design spec and plan. Never commit it; it describes internal infrastructure.
 - `config.example.yaml`: documented config. The live config is `config.yaml` in this folder (gitignored, holds personal sites); the LaunchAgent passes `-config` pointing at it. Output data stays in `~/.config/chrome-bridge/data`.
 
 ## Commands
@@ -31,7 +33,8 @@ After editing `extension/`, reload it in `chrome://extensions`. YAML edits need 
   - `Origin`, when present (Chrome omits it on extension GETs), must be `chrome-extension://`, and equal `extension_id` when set → else 403.
   - Signing lives only in `sign()` (main.go) and `bridge.js`; change both together. Never send the secret itself, never add CORS allow headers, never add an endpoint outside `guard`.
 - Source names must not contain path separators; they become file names.
-- Never log or print cookie/localStorage values. Log counts only.
+- Never log or print cookie/localStorage values or login credentials/OTPs. Log counts and outcomes only.
+- Email and password live only in Keychain (`security add-generic-password -U -s <keychain> -a email|password -w`), never in YAML. The TOTP seed may be in `config.yaml` (`totp_seed`, file is 0600 and gitignored) or Keychain (`totp_seed` account). Never return a seed from any endpoint. A failed auto-login must pause, not retry: a wrong password must not lock the account.
 - Push bodies are capped at 5 MB.
 
 ## Known limits

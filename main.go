@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -11,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,12 +40,27 @@ type Source struct {
 	Write        []Write  `yaml:"write" json:"-"`
 }
 
+type Login struct {
+	Name     string `yaml:"name" json:"name"`
+	Match    string `yaml:"match" json:"match"`
+	Keychain string `yaml:"keychain" json:"-"`
+	TOTPSeed string `yaml:"totp_seed" json:"-"` // optional; falls back to Keychain account totp_seed
+}
+
+type VPN struct {
+	Probe string   `yaml:"probe"`
+	Every string   `yaml:"every"`
+	Cmd   []string `yaml:"cmd"`
+}
+
 type Config struct {
 	Listen      string   `yaml:"listen"`
 	OutDir      string   `yaml:"out_dir"`
 	ExtensionID string   `yaml:"extension_id"`
 	Secret      string   `yaml:"secret"`
 	Sources     []Source `yaml:"sources"`
+	Logins      []Login  `yaml:"logins"`
+	VPN         VPN      `yaml:"vpn"`
 }
 
 type Push struct {
@@ -97,6 +117,94 @@ func sign(secret, msg string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// RFC 6238: SHA1, 6 digits, 30s steps.
+func totp(seed string, t time.Time) (string, error) {
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(strings.TrimRight(strings.ReplaceAll(seed, " ", ""), "=")))
+	if err != nil {
+		return "", err
+	}
+	m := hmac.New(sha1.New, key)
+	binary.Write(m, binary.BigEndian, uint64(t.Unix()/30))
+	s := m.Sum(nil)
+	o := s[len(s)-1] & 0xf
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(s[o:o+4])&0x7fffffff%1000000), nil
+}
+
+// Items made with `security add-generic-password` trust /usr/bin/security, so rebuilds of this binary don't re-prompt.
+var keychain = func(service, account string) (string, error) {
+	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", service, "-a", account, "-w").Output()
+	if err != nil {
+		return "", fmt.Errorf("keychain %s/%s: %w", service, account, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+type vpnState struct {
+	Up          bool      `json:"up"`
+	Since       time.Time `json:"since"`
+	LastAttempt time.Time `json:"last_attempt"`
+	LastError   string    `json:"last_error"`
+	fails       int
+	running     bool
+	next        time.Time
+	backoff     time.Duration
+}
+
+// Probes the VPN and reconnects when it's down. Re-reads the YAML each tick; idles without a vpn block.
+func watchVPN(cfgPath string, mu *sync.Mutex, st *vpnState) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	for {
+		cfg, err := load(cfgPath)
+		if err != nil || cfg.VPN.Probe == "" || len(cfg.VPN.Cmd) == 0 {
+			time.Sleep(30 * time.Second)
+			continue
+		}
+		every, _ := time.ParseDuration(cfg.VPN.Every)
+		if every <= 0 {
+			every = 30 * time.Second
+		}
+		resp, perr := client.Get(cfg.VPN.Probe)
+		if perr == nil {
+			resp.Body.Close()
+		}
+		mu.Lock()
+		switch {
+		case perr == nil:
+			if !st.Up {
+				st.Up, st.Since = true, time.Now()
+				log.Printf("vpn: up")
+			}
+			st.fails, st.backoff, st.next = 0, 0, time.Time{}
+		default:
+			st.fails++
+			if st.fails >= 2 && st.Up {
+				st.Up, st.Since = false, time.Now()
+				log.Printf("vpn: down (%v)", perr)
+			}
+			if st.fails >= 2 && !st.running && time.Now().After(st.next) {
+				st.running, st.LastAttempt = true, time.Now()
+				st.backoff = min(max(st.backoff*2, time.Minute), 15*time.Minute)
+				st.next = time.Now().Add(st.backoff)
+				go func(cmd []string) {
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+					defer cancel()
+					log.Printf("vpn: running %v", cmd)
+					out, err := exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
+					mu.Lock()
+					defer mu.Unlock()
+					st.running, st.LastError = false, ""
+					if err != nil {
+						st.LastError = fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+						log.Printf("vpn: reconnect failed: %s", st.LastError)
+					}
+				}(cfg.VPN.Cmd)
+			}
+		}
+		mu.Unlock()
+		time.Sleep(every)
+	}
+}
+
 // Max clock skew between extension and server for a signed request.
 const skew = 60
 
@@ -112,6 +220,9 @@ func handler(cfgPath string) http.Handler {
 	started := time.Now()
 	var mu sync.Mutex
 	pushes := map[string]lastPush{}
+	vpn := &vpnState{}
+	go watchVPN(cfgPath, &mu, vpn)
+	lastOTP := map[string]int64{}
 	type fn func(r *http.Request, cfg *Config, body []byte) (int, []byte)
 	// The secret never crosses the wire: requests carry HMAC(secret, time+method+path+body), and
 	// responses HMAC(secret, "resp"+time+body) so the extension can tell this server from a port squatter.
@@ -172,8 +283,68 @@ func handler(cfgPath string) http.Handler {
 		defer mu.Unlock()
 		b, _ := json.Marshal(map[string]any{
 			"started_at": started, "config": cfgPath, "out_dir": cfg.OutDir, "listen": cfg.Listen,
-			"sources": cfg.Sources, "pushes": pushes,
+			"sources": cfg.Sources, "pushes": pushes, "vpn": vpn,
 		})
+		return 200, b
+	}))
+	mux.HandleFunc("GET /logins", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		b, _ := json.Marshal(cfg.Logins)
+		return 200, b
+	}))
+	findLogin := func(cfg *Config, name string) *Login {
+		for i := range cfg.Logins {
+			if cfg.Logins[i].Name == name {
+				return &cfg.Logins[i]
+			}
+		}
+		return nil
+	}
+	mux.HandleFunc("POST /login/{name}", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		l := findLogin(cfg, r.PathValue("name"))
+		if l == nil {
+			return 404, []byte("unknown login")
+		}
+		email, err := keychain(l.Keychain, "email")
+		if err != nil {
+			return 500, []byte(err.Error())
+		}
+		pw, err := keychain(l.Keychain, "password")
+		if err != nil {
+			return 500, []byte(err.Error())
+		}
+		log.Printf("login %s: credentials served", l.Name)
+		b, _ := json.Marshal(map[string]string{"email": email, "password": pw})
+		return 200, b
+	}))
+	mux.HandleFunc("POST /login/{name}/otp", guard(func(r *http.Request, cfg *Config, _ []byte) (int, []byte) {
+		l := findLogin(cfg, r.PathValue("name"))
+		if l == nil {
+			return 404, []byte("unknown login")
+		}
+		seed, err := l.TOTPSeed, error(nil)
+		if seed == "" {
+			seed, err = keychain(l.Keychain, "totp_seed")
+		}
+		if err != nil {
+			return 500, []byte(err.Error())
+		}
+		// A code JumpCloud has already accepted is rejected on reuse, so wait out the window.
+		mu.Lock()
+		if lastOTP[l.Name] == time.Now().Unix()/30 {
+			wait := time.Duration(30-time.Now().Unix()%30) * time.Second
+			mu.Unlock()
+			time.Sleep(wait)
+			mu.Lock()
+		}
+		now := time.Now()
+		lastOTP[l.Name] = now.Unix() / 30
+		mu.Unlock()
+		code, err := totp(seed, now)
+		if err != nil {
+			return 500, []byte("totp_seed: " + err.Error())
+		}
+		log.Printf("login %s: otp served", l.Name)
+		b, _ := json.Marshal(map[string]string{"otp": code})
 		return 200, b
 	}))
 	readData := func(cfg *Config, name string) (json.RawMessage, bool) {

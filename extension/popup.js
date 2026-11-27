@@ -64,6 +64,12 @@ function renderServer({ status, down, error, auth }) {
     h("dt", { textContent: "Config" }), h("dd", { textContent: status.config, title: status.config }),
     h("dt", { textContent: "Output" }), h("dd", { textContent: status.out_dir, title: status.out_dir }),
   ));
+  const v = status.vpn;
+  if (v && !v.since.startsWith("0001")) {
+    const tried = v.last_attempt.startsWith("0001") ? "" : `, reconnect tried ${ago(v.last_attempt)}`;
+    server.append(h("div", { className: v.up ? "meta" : "err", textContent: `VPN ${v.up ? "up" : "down"} since ${ago(v.since)}${v.up ? "" : tried}` }));
+    if (!v.up && v.last_error) server.append(h("div", { className: "err", textContent: v.last_error }));
+  }
 }
 
 function renderSites(sources, pushes, local) {
